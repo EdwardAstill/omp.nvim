@@ -7,15 +7,35 @@ local function visible()
   return window and vim.api.nvim_win_is_valid(window)
 end
 
+local function float_config()
+  local width = math.max(1, math.min(math.floor(vim.o.columns * 0.9), vim.o.columns - 2))
+  local height = math.max(1, math.min(math.floor(vim.o.lines * 0.9), vim.o.lines - 2))
+  return {
+    relative = "editor",
+    width = width,
+    height = height,
+    row = math.max(0, math.floor((vim.o.lines - height - 2) / 2)),
+    col = math.max(0, math.floor((vim.o.columns - width - 2) / 2)),
+    style = "minimal",
+    border = "rounded",
+    title = " OMP ",
+    title_pos = "center",
+  }
+end
+
+vim.api.nvim_create_autocmd("VimResized", {
+  group = vim.api.nvim_create_augroup("OmpFloat", { clear = true }),
+  callback = function()
+    if visible() then vim.api.nvim_win_set_config(window, float_config()) end
+  end,
+})
+
 function M.setup(opts)
   options = vim.tbl_deep_extend("force", options, opts or {})
 end
 
 function M.hide()
   if not visible() then return false end
-  if #vim.api.nvim_tabpage_list_wins(vim.api.nvim_win_get_tabpage(window)) == 1 then
-    vim.api.nvim_win_call(window, function() vim.cmd("aboveleft new") end)
-  end
   vim.api.nvim_win_close(window, true)
   window = nil
   return true
@@ -60,10 +80,7 @@ function M.open()
     vim.api.nvim_set_current_win(window)
     vim.api.nvim_win_set_buf(window, session.buffer)
   else
-    vim.cmd("botright vsplit")
-    window = vim.api.nvim_get_current_win()
-    vim.api.nvim_win_set_buf(window, session.buffer)
-    vim.api.nvim_win_set_width(window, math.max(1, math.floor(vim.o.columns * 0.4)))
+    window = vim.api.nvim_open_win(session.buffer, true, float_config())
   end
   vim.cmd("lcd " .. vim.fn.fnameescape(cwd))
   if #vim.api.nvim_list_uis() > 0 then vim.cmd.startinsert() end

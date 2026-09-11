@@ -1,6 +1,6 @@
 # omp.nvim
 
-Run [Oh My Pi](https://github.com/can1357/oh-my-pi) inside a Neovim terminal split,
+Run [Oh My Pi](https://github.com/can1357/oh-my-pi) inside a centered Neovim floating terminal,
 using Neovim's current working directory (including `:lcd` and `:tcd`).
 Requires Neovim 0.11+ and `omp` on PATH.
 
@@ -17,7 +17,7 @@ Requires Neovim 0.11+ and `omp` on PATH.
 }
 ```
 
-`:Omp` opens or focuses the right-hand panel. `:OmpToggle` shows/hides it.
+`:Omp` opens or focuses the centered floating panel. `:OmpToggle` shows/hides it.
 `:OmpHide` or `Ctrl+q` inside the panel hides it without stopping the process.
 Use `Ctrl+\ Ctrl+n` for terminal Normal mode. Each working directory gets its own
 process; returning to a directory reuses its running session. An exited process

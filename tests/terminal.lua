@@ -19,7 +19,18 @@ local function output(buf, text)
   end)
 end
 vim.cmd.cd(vim.fn.fnameescape(root .. "/one"))
+local editor = vim.api.nvim_get_current_win()
+local editor_width = vim.api.nvim_win_get_width(editor)
 local first = omp.open()
+local panel = vim.api.nvim_get_current_win()
+local config = vim.api.nvim_win_get_config(panel)
+assert(config.relative == "editor", "OMP is not a floating window")
+assert(vim.api.nvim_win_get_width(editor) == editor_width, "OMP resized the editor")
+assert(math.abs(config.col - (vim.o.columns - config.width - 2) / 2) <= 1,
+  "OMP is not horizontally centered")
+vim.o.columns = 240
+vim.api.nvim_exec_autocmds("VimResized", {})
+assert(vim.api.nvim_win_get_width(panel) == 216, "OMP did not resize with the editor")
 assert(output(first, "CWD=" .. root .. "/one"), "wrong process cwd")
 assert(output(first, "['--cwd', '" .. root .. "/one']"), "cwd argument was not preserved")
 local job = vim.bo[first].channel
