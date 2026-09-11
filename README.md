@@ -9,6 +9,7 @@ Requires Neovim 0.11+ and `omp` on PATH.
 ```lua
 {
   "EdwardAstill/omp.nvim",
+  cmd = { "Omp", "OmpToggle", "OmpHide" },
   opts = {},
   keys = {
     { "<leader>p", "<cmd>OmpToggle<cr>", desc = "Toggle OMP" },
