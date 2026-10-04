@@ -1,8 +1,22 @@
 local M = {}
+local bridge = require("omp.bridge")
 local sessions = {}
 local options = { command = { "omp" } }
-local window
+local window, target
+local next_id = 0
 local augroup = vim.api.nvim_create_augroup("OmpFloat", { clear = true })
+
+local function changed()
+  vim.api.nvim_exec_autocmds("User", { pattern = "OmpSessionsChanged" })
+end
+
+local function find(id)
+  for cwd, group in pairs(sessions) do
+    for index, session in ipairs(group) do
+      if session.id == id then return session, group, index, cwd end
+    end
+  end
+end
 
 local function directory_sessions(cwd)
   cwd = cwd or vim.fn.getcwd()
@@ -60,19 +74,40 @@ local function open(cwd)
     if session and vim.api.nvim_buf_is_valid(session.buffer) then
       vim.api.nvim_buf_delete(session.buffer, { force = true })
     end
-    session = { buffer = vim.api.nvim_create_buf(false, true) }
+    local previous = session
+    if previous then bridge.stop(previous) else next_id = next_id + 1 end
+    session = {
+      buffer = vim.api.nvim_create_buf(false, true), id = previous and previous.id or next_id,
+      name = previous and previous.name, file = previous and previous.file, cwd = cwd, status = "starting",
+    }
     group[group.current] = session
     vim.bo[session.buffer].bufhidden = "hide"
     vim.bo[session.buffer].swapfile = false
     local command = vim.list_extend(vim.deepcopy(options.command), { "--cwd", cwd })
+    if session.file and vim.fn.filereadable(session.file) == 1 then
+      vim.list_extend(command, { "--resume", session.file })
+    end
+    local ok, extra, env = pcall(bridge.start, session, changed)
+    if not ok then
+      bridge.stop(session)
+      vim.notify("Could not connect OMP to Neovim: " .. tostring(extra), vim.log.levels.ERROR)
+      return
+    end
+    vim.list_extend(command, extra)
     vim.api.nvim_buf_call(session.buffer, function()
       session.job = vim.fn.jobstart(command, {
         term = true,
         cwd = cwd,
-        on_exit = function() session.job = nil end,
+        env = env,
+        on_exit = function()
+          session.job, session.status = nil, "stopped"
+          bridge.stop(session)
+          changed()
+        end,
       })
     end)
     if session.job <= 0 then
+      bridge.stop(session)
       vim.api.nvim_buf_delete(session.buffer, { force = true })
       table.remove(group, group.current)
       group.current = math.max(1, math.min(group.current, #group))
@@ -104,6 +139,8 @@ local function open(cwd)
       end,
     })
   end
+  target = session.id
+  changed()
   if visible() and vim.api.nvim_win_get_tabpage(window) ~= vim.api.nvim_get_current_tabpage() then
     M.hide()
   end
@@ -122,11 +159,12 @@ function M.open()
   return open()
 end
 
-function M.new()
-  local group = directory_sessions()
+function M.new(cwd)
+  local group
+  group, cwd = directory_sessions(cwd)
   local previous = group.current
   group.current = #group + 1
-  local buffer = M.open()
+  local buffer = open(cwd)
   if not buffer then group.current = previous end
   return buffer
 end
@@ -137,10 +175,18 @@ function M.cycle()
   return M.open()
 end
 
-function M.close()
+function M.close(id)
   local group, cwd = directory_sessions()
+  local was_visible = visible()
+  local index
+  if id then
+    local session
+    session, group, index, cwd = find(id)
+    if not session then return false end
+    group.current = index
+  end
   -- The visible panel owns the target, even when invoked from another window.
-  if visible() then
+  if not id and visible() then
     local buffer = vim.api.nvim_win_get_buf(window)
     for path, candidate in pairs(sessions) do
       if candidate[candidate.current] and candidate[candidate.current].buffer == buffer then
@@ -149,10 +195,16 @@ function M.close()
         break
       end
     end
+  elseif not id and target then
+    local session
+    session, group, index, cwd = find(target)
+    if not session then return false end
+    group.current = index
   end
   local session = group[group.current]
   if not session then return false end
   M.hide()
+  bridge.stop(session)
   if session.job then vim.fn.jobstop(session.job) end
   if vim.api.nvim_buf_is_valid(session.buffer) then
     vim.api.nvim_buf_delete(session.buffer, { force = true })
@@ -160,22 +212,90 @@ function M.close()
   table.remove(group, group.current)
   if #group == 0 then
     group.current = 1
+    if target == session.id then target = nil end
   else
     group.current = (group.current - 1) % #group + 1
-    open(cwd)
+    if target == session.id then target = group[group.current].id end
+    if was_visible then open(cwd) end
   end
+  changed()
   return true
 end
 
+function M.list()
+  local result = {}
+  for _, group in pairs(sessions) do
+    for _, session in ipairs(group) do
+      result[#result + 1] = {
+        id = session.id, name = session.name or ("Session " .. session.id),
+        cwd = session.project or session.cwd, status = session.job and session.status or "stopped",
+        selected = target == session.id, buffer = session.buffer,
+      }
+    end
+  end
+  table.sort(result, function(a, b) return a.id < b.id end)
+  return result
+end
+
+function M.select(id, show)
+  local session, group, index, cwd = find(id)
+  if not session then return false end
+  target, group.current = id, index
+  changed()
+  if show then return open(cwd) end
+  return true
+end
+
+function M.open_selected()
+  if target then return M.select(target, true) end
+  return M.open()
+end
+
+local function request(id, message, callback)
+  local session = find(id or target)
+  if not session or not session.job then
+    vim.notify("Choose a running OMP session with :OmpSessions first", vim.log.levels.WARN)
+    return false
+  end
+  return bridge.request(session, message, function(error, response)
+    if error then vim.notify(error, vim.log.levels.ERROR); return end
+    if callback then callback(session, response) end
+  end)
+end
+
+function M.send(text)
+  if not text:find("%S") then return false end
+  return request(nil, { type = "prompt", text = text }, function(session, response)
+    session.sent = true
+    vim.notify((response.queued and "Queued for " or "Sent to ") .. (session.name or ("OMP " .. session.id)))
+  end)
+end
+
+function M.interrupt(id)
+  return request(id, { type = "abort" })
+end
+
+function M.rename(id, name)
+  return request(id, { type = "rename", name = name })
+end
+
 function M.toggle()
-  local group = directory_sessions()
-  local session = group[group.current]
+  local session = target and find(target)
   if visible() and session and vim.api.nvim_win_get_buf(window) == session.buffer
       and vim.api.nvim_win_get_tabpage(window) == vim.api.nvim_get_current_tabpage() then
     M.hide()
   else
-    return M.open()
+    return M.open_selected()
   end
 end
+
+vim.api.nvim_create_autocmd("VimLeavePre", {
+  group = augroup,
+  callback = function()
+    for _, group in pairs(sessions) do
+      for _, session in ipairs(group) do bridge.stop(session) end
+    end
+  end,
+})
 
 return M

@@ -32,7 +32,7 @@ vim.o.columns = 240
 vim.api.nvim_exec_autocmds("VimResized", {})
 assert(vim.api.nvim_win_get_width(panel) == 216, "OMP did not resize with the editor")
 assert(output(first, "CWD=" .. root .. "/one"), "wrong process cwd")
-assert(output(first, "['--cwd', '" .. root .. "/one']"), "cwd argument was not preserved")
+assert(output(first, "['--cwd', '" .. root .. "/one', '--extension'"), "cwd argument was not preserved")
 local job = vim.bo[first].channel
 assert(omp.hide())
 assert(vim.fn.jobwait({ job }, 0)[1] == -1, "hide killed process")
