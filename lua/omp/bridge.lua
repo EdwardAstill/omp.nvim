@@ -6,6 +6,25 @@ local function close(handle)
   if handle and not handle:is_closing() then handle:close() end
 end
 
+local function transmit(bridge, id, entry)
+  close(entry.timer)
+  entry.timer = vim.defer_fn(function()
+    if bridge.pending[id] ~= entry then return end
+    bridge.pending[id] = nil
+    entry.callback("No acknowledgement from OMP; check the draft before trying again")
+  end, 5000)
+  bridge.client:write(entry.message, function(error)
+    if not error then return end
+    vim.schedule(function()
+      if bridge.pending[id] ~= entry then return end
+      bridge.pending[id] = nil
+      close(entry.timer)
+      entry.callback("OMP connection closed: " .. error)
+    end)
+  end)
+  entry.message = nil
+end
+
 function M.start(session, changed)
   local bridge = { root = vim.fn.tempname(), pending = {}, sequence = 0 }
   session.bridge = bridge
@@ -42,10 +61,17 @@ function M.start(session, changed)
           local ok, event = pcall(vim.json.decode, line)
           if not ok or type(event) ~= "table" then return end
           if event.type == "state" then
+            local connecting = not bridge.ready
             bridge.ready = true
             session.name = event.name or session.name
             session.project, session.file = event.cwd, event.file
             session.status = event.status
+            if connecting then
+              for id = 1, bridge.sequence do
+                local entry = bridge.pending[id]
+                if entry and entry.message then transmit(bridge, id, entry) end
+              end
+            end
             changed()
           elseif event.type == "response" then
             local request = bridge.pending[event.id]
@@ -54,8 +80,7 @@ function M.start(session, changed)
               close(request.timer)
               request.callback(event.error, event)
             end
-          elseif event.type == "end" and session.sent then
-            session.sent = false
+          elseif event.type == "end" then
             vim.notify("OMP: " .. (session.name or ("Session " .. session.id)) .. " finished")
             vim.api.nvim_exec_autocmds("User", {
               pattern = "OmpAgentEnd", data = { buffer = session.buffer, id = session.id },
@@ -70,28 +95,23 @@ end
 
 function M.request(session, request, callback)
   local bridge = session.bridge
-  if not bridge or not bridge.ready or not bridge.client then
-    callback("Session is not ready; open it to finish startup")
+  if not bridge or not bridge.ready and session.status ~= "starting" then
+    callback("OMP session is not connected")
     return false
   end
   bridge.sequence = bridge.sequence + 1
   request.id = bridge.sequence
-  local entry = { callback = callback }
+  local entry = { callback = callback, message = vim.json.encode(request) .. "\n" }
   bridge.pending[request.id] = entry
-  entry.timer = vim.defer_fn(function()
-    if bridge.pending[request.id] ~= entry then return end
-    bridge.pending[request.id] = nil
-    callback("No acknowledgement from OMP; check the session before sending again")
-  end, 5000)
-  bridge.client:write(vim.json.encode(request) .. "\n", function(error)
-    if not error then return end
-    vim.schedule(function()
+  if bridge.ready then
+    transmit(bridge, request.id, entry)
+  else
+    entry.timer = vim.defer_fn(function()
       if bridge.pending[request.id] ~= entry then return end
       bridge.pending[request.id] = nil
-      close(entry.timer)
-      callback("OMP connection closed: " .. error)
-    end)
-  end)
+      callback("OMP did not finish startup; check its terminal before trying again")
+    end, 30000)
+  end
   return true
 end
 

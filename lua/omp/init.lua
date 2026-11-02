@@ -62,7 +62,7 @@ function M.hide()
   return true
 end
 
-local function open(cwd)
+local function open(cwd, hidden)
   local group
   group, cwd = directory_sessions(cwd)
   local session = group[group.current]
@@ -141,6 +141,7 @@ local function open(cwd)
   end
   target = session.id
   changed()
+  if hidden then return session.buffer end
   if visible() and vim.api.nvim_win_get_tabpage(window) ~= vim.api.nvim_get_current_tabpage() then
     M.hide()
   end
@@ -153,6 +154,10 @@ local function open(cwd)
   vim.cmd("lcd " .. vim.fn.fnameescape(cwd))
   if #vim.api.nvim_list_uis() > 0 then vim.cmd.startinsert() end
   return session.buffer
+end
+
+function M.start()
+  return open(nil, true)
 end
 
 function M.open()
@@ -251,24 +256,21 @@ function M.open_selected()
   return M.open()
 end
 
-local function request(id, message, callback)
+local function request(id, message)
   local session = find(id or target)
   if not session or not session.job then
     vim.notify("Choose a running OMP session with :OmpSessions first", vim.log.levels.WARN)
     return false
   end
-  return bridge.request(session, message, function(error, response)
-    if error then vim.notify(error, vim.log.levels.ERROR); return end
-    if callback then callback(session, response) end
+  return bridge.request(session, message, function(error)
+    if error then vim.notify(error, vim.log.levels.ERROR) end
   end)
 end
 
 function M.send(text)
   if not text:find("%S") then return false end
-  return request(nil, { type = "prompt", text = text }, function(session, response)
-    session.sent = true
-    vim.notify((response.queued and "Queued for " or "Sent to ") .. (session.name or ("OMP " .. session.id)))
-  end)
+  if not M.open_selected() then return false end
+  return request(nil, { type = "draft", text = text })
 end
 
 function M.interrupt(id)

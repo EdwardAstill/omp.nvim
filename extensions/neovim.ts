@@ -2,7 +2,7 @@ import { createConnection, type Socket } from "node:net";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 
 // Each Neovim-owned terminal gets a private local socket. Never inherit the
-// connection in a task subagent, and never edit the interactive prompt draft.
+// connection in a task subagent.
 export default function (pi: ExtensionAPI) {
   const path = process.env.OMP_NVIM_SOCKET;
   if (!path) return;
@@ -41,11 +41,11 @@ export default function (pi: ExtensionAPI) {
     try {
       request = JSON.parse(line);
       if (!request) throw new Error("Invalid request");
-      if (request.type === "prompt") {
-        if (typeof request.text !== "string" || !request.text.trim()) throw new Error("Empty prompt");
-        const queued = !context.isIdle();
-        pi.sendUserMessage(request.text, queued ? { deliverAs: "followUp" } : undefined);
-        emit({ type: "response", id: request.id, queued });
+      if (request.type === "draft") {
+        if (typeof request.text !== "string" || !request.text.trim()) throw new Error("Empty draft");
+        const draft = context.ui.getEditorText();
+        context.ui.setEditorText((draft ? draft + "\n\n" : "") + request.text + "\n\n");
+        emit({ type: "response", id: request.id });
       } else if (request.type === "abort") {
         context.abort();
         emit({ type: "response", id: request.id });

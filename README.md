@@ -47,22 +47,29 @@ Tab switches between current-project and all-project history. `/new` starts a
 fresh conversation within the same process.
 To override the executable, use `opts = { command = { "/path/to/omp" } }`.
 
-## Sending from the editor
+## Drafts from the editor
 
-`require("omp").send(text)` sends to the selected existing process without
-opening its terminal or changing the unsent draft. Busy agents receive a
-follow-up; no selected running session means a warning, never a new process.
+`require("omp").start()` starts a fresh conversation for the current directory
+without opening a panel or moving editor focus; repeated calls reuse that process.
+Call it during interactive Neovim startup to have OMP ready in the background.
+
+`require("omp").send(text)` opens the selected session and appends text to its
+editable draft, with blank lines left for an instruction. It starts a session if
+needed and waits for startup before staging. Existing draft text is preserved;
+nothing submits or queues until the user presses Enter, even while OMP is busy.
+Hosts can use this to stage file paths or quoted selections with file/line context.
 `require("omp").interrupt()` interrupts the selected agent.
 
-An OMP extension uses `sendUserMessage` over a private local socket, loaded only
-for these terminals. Subagents do not connect. Restart existing processes after
-updating. `User OmpAgentEnd` fires when an agent that received a send finishes;
-hosts can use it to reload saved buffers. The picker tracks runtime processes,
-while OMP owns saved history. Sessions in other terminals are not listed.
+An OMP extension edits the prompt over a private local socket, loaded only for
+these terminals. Subagents do not connect. Restart existing processes after
+updating. `User OmpAgentEnd` fires when an agent turn finishes, including manually
+submitted prompts; hosts can use it to reload saved buffers. The picker tracks
+runtime processes, while OMP owns saved history. Sessions in other terminals are
+not listed.
 
 ## Test
 
 From this checkout, run `nvim --headless -u NONE -l tests/terminal.lua`.
 Run `nvim --headless -u NONE -l tests/focus.lua` for scrolling, mouse, and typing checks.
-Run `nvim --headless -u NONE -l tests/sessions.lua` for live sending and picker controls
+Run `nvim --headless -u NONE -l tests/sessions.lua` for draft staging, manual submission, and picker controls
 (requires Bun; uses a fake agent and sends no model requests).

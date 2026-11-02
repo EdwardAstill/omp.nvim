@@ -12,12 +12,16 @@ if (!existsSync(file)) writeFileSync(file, "saved conversation\n");
 const record = (value: object) => appendFileSync(log, JSON.stringify(value) + "\n");
 let busy = false;
 let name = "Fixture " + process.pid;
+let draft = "unsent draft";
 const context = {
   mode: "tui", agent: { kind: "main" }, cwd: process.cwd(),
   sessionManager: { getSessionId: () => file, getSessionFile: () => file },
   isIdle: () => !busy,
   abort: () => { record({ type: "abort" }); busy = false; fire("agent_end"); },
-  ui: { getEditorText: () => "unsent draft", setEditorText: () => { throw new Error("Draft was changed"); } },
+  ui: {
+    getEditorText: () => draft,
+    setEditorText: (text: string) => { draft = text; record({ type: "draft", text, file, busy }); },
+  },
 };
 function fire(event: string) {
   for (const handler of handlers.get(event) ?? []) handler({ type: event }, context);
@@ -26,15 +30,29 @@ extension({
   on: (event: string, callback: Function) => handlers.set(event, [...handlers.get(event) ?? [], callback]),
   getSessionName: () => name,
   setSessionName: async (value: string) => { name = value; record({ type: "rename", name }); },
-  sendUserMessage: (text: string, options: object) => {
-    record({ type: "prompt", text, options, file, draft: context.ui.getEditorText() });
-    if (busy) return;
-    busy = true;
-    fire("agent_start");
-    if (text !== "wait") setTimeout(() => { busy = false; fire("agent_end"); }, 30);
-  },
+  sendUserMessage: () => { throw new Error("Draft transport must not submit or queue messages"); },
 });
 record({ type: "start", argv: process.argv, file });
-fire("session_start");
+// Delay the handshake so immediate Neovim sends exercise the connecting state.
+setTimeout(() => fire("session_start"), 100);
 console.log("READY");
+process.stdin.setRawMode(true);
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (data: string) => {
+  for (const character of data) {
+    if (character === "\r" || character === "\n") {
+      if (busy || !draft.trim()) continue;
+      const text = draft;
+      draft = "";
+      record({ type: "prompt", text, file, source: "enter" });
+      busy = true;
+      fire("agent_start");
+      if (text.trim() !== "wait") setTimeout(() => { busy = false; fire("agent_end"); }, 30);
+    } else if (character === "\x15") {
+      context.ui.setEditorText("");
+    } else {
+      context.ui.setEditorText(draft + character);
+    }
+  }
+});
 process.on("SIGTERM", () => { fire("session_shutdown"); process.exit(0); });
