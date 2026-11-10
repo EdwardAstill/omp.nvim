@@ -11,8 +11,9 @@ local function transmit(bridge, id, entry)
   entry.timer = vim.defer_fn(function()
     if bridge.pending[id] ~= entry then return end
     bridge.pending[id] = nil
-    entry.callback("No acknowledgement from OMP; check the draft before trying again")
-  end, 5000)
+    entry.callback(entry.suggestion and "OMP suggestion timed out" or
+      "No acknowledgement from OMP; check the draft before trying again")
+  end, entry.suggestion and 120000 or 5000)
   bridge.client:write(entry.message, function(error)
     if not error then return end
     vim.schedule(function()
@@ -46,6 +47,12 @@ function M.start(session, changed)
           if session.bridge ~= bridge then return end
           bridge.client, bridge.ready = nil, false
           session.status = session.job and "disconnected" or "stopped"
+          local requests = bridge.pending
+          bridge.pending = {}
+          for _, entry in pairs(requests) do
+            close(entry.timer)
+            entry.callback("OMP connection closed")
+          end
           changed()
         end)
         return
@@ -101,7 +108,9 @@ function M.request(session, request, callback)
   end
   bridge.sequence = bridge.sequence + 1
   request.id = bridge.sequence
-  local entry = { callback = callback, message = vim.json.encode(request) .. "\n" }
+  local entry = {
+    callback = callback, message = vim.json.encode(request) .. "\n", suggestion = request.type == "suggest",
+  }
   bridge.pending[request.id] = entry
   if bridge.ready then
     transmit(bridge, request.id, entry)

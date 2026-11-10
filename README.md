@@ -9,10 +9,19 @@ Requires Neovim 0.11+ and `omp` on PATH.
 ```lua
 {
   "EdwardAstill/omp.nvim",
-  cmd = { "Omp", "OmpToggle", "OmpHide", "OmpNew", "OmpCycle", "OmpClose", "OmpSessions" },
+  cmd = {
+    "Omp", "OmpToggle", "OmpHide", "OmpNew", "OmpCycle", "OmpClose", "OmpSessions",
+    "OmpComplete", "OmpEdit", "OmpAccept", "OmpReject",
+  },
   opts = {},
   keys = {
-    { "<leader>p", "<cmd>OmpSessions<cr>", desc = "OMP sessions" },
+    { "<leader>pc", "<cmd>Omp<cr>", desc = "OMP chat" },
+    { "<leader>pp", "<cmd>OmpComplete<cr>", desc = "OMP completion" },
+    { "<C-g>a", "<cmd>OmpComplete<cr>", mode = "i", desc = "OMP completion" },
+    { "<leader>pe", "<cmd>OmpEdit<cr>", desc = "OMP document edits" },
+    { "<leader>pe", ":OmpEdit<cr>", mode = "x", desc = "OMP selected-line edits" },
+    { "<leader>ps", "<cmd>OmpSessions<cr>", desc = "OMP sessions" },
+    { "<leader>pd", "<cmd>OmpReject all<cr>", desc = "Discard OMP proposal" },
   },
 }
 ```
@@ -67,9 +76,43 @@ submitted prompts; hosts can use it to reload saved buffers. The picker tracks
 runtime processes, while OMP owns saved history. Sessions in other terminals are
 not listed.
 
+## Reviewable proposals
+
+`:OmpComplete` proposes an insertion at the cursor. `:OmpEdit [instruction]`
+proposes a replacement for the current document; `:'<,'>OmpEdit [instruction]`
+limits replacement to selected lines. Without an instruction, edits fix clear
+errors. Both use the unsaved buffer, including unnamed buffers, without opening chat.
+
+Proposals use the selected OMP session's current model and credentials in a
+separate tool-free inference request. No chat history, draft, or agent tools are
+used; the model cannot write files. Buffer text is sent to that model's provider
+and billed normally. Requests start a hidden session if needed. Restart existing
+Neovim/OMP processes after upgrading the extension.
+
+The proposal opens a native side-by-side diff in a separate tab: current text on
+the left, proposed text on the right. Both preview buffers are read-only.
+
+| Review key | Action |
+| --- | --- |
+| `a` / `r` | Accept / reject the hunk under the cursor |
+| `A` / `R` | Accept / reject all remaining hunks |
+| `]c` / `[c` | Next / previous hunk |
+| `q` / Escape | Close and discard remaining hunks |
+
+`:OmpAccept [all]` and `:OmpReject [all]` expose the same actions; reject-all also
+cancels a pending request. Accepted changes update only the original buffer,
+remain unsaved, and support normal undo. Closing review keeps accepted changes.
+Only one proposal can be pending/reviewed at once. A source edit during inference
+or review invalidates the proposal rather than overwriting newer work.
+Malformed, failed, or truncated responses are rejected, never partially applied.
+
 ## Test
 
 From this checkout, run `nvim --headless -u NONE -l tests/terminal.lua`.
 Run `nvim --headless -u NONE -l tests/focus.lua` for scrolling, mouse, and typing checks.
 Run `nvim --headless -u NONE -l tests/sessions.lua` for draft staging, manual submission, and picker controls
 (requires Bun; uses a fake agent and sends no model requests).
+Run `nvim --headless -u NONE -l tests/review.lua` for hunk review, undo, cursor
+insertion, unsaved buffers, stale-response protection, and cancellation.
+Run `bun test tests/proposals.test.ts` for response validation and socket
+cancellation/chat isolation. These tests make no model requests.

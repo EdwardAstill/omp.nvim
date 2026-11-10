@@ -273,6 +273,23 @@ function M.send(text)
   return request(nil, { type = "draft", text = text })
 end
 
+function M.suggest(message, callback)
+  local session, _, _, cwd = find(target)
+  if not session or not session.job then
+    if not open(cwd, true) then callback("Could not start OMP"); return end
+    session = find(target)
+  end
+  message.type = "suggest"
+  if not bridge.request(session, message, callback) then return end
+  return function()
+    if session.job and session.bridge then
+      bridge.request(session, { type = "cancel_suggestion" }, function(error)
+        if error then vim.notify(error, vim.log.levels.WARN) end
+      end)
+    end
+  end
+end
+
 function M.interrupt(id)
   return request(id, { type = "abort" })
 end
